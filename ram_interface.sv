@@ -32,20 +32,15 @@ typedef enum {
 
 bram_state current_state;
 
-//logic [BRAM_READ_LATENCY-1:0] fifo_ready;
 logic [FIFO_READ_LATENCY-1:0] fifo_valid;
 
-localparam $clog2(TOTAL_SIZE/WRITE_WIDTH) MAX_ADDRESS_INDEX;
+localparam int MAX_ADDRESS_INDEX $clog2(TOTAL_SIZE/WRITE_WIDTH);    // Index sized based on params
 logic [MAX_ADDRESS_INDEX-1:0] addra [FIFO_READ_LATENCY-1:0];
 
+logic [BRAM_READ_LATENCY-1:0] bram_valid; 
+logic sbiterrb, dbiterrb;
 
-// This block controls streaming data into the fifo
-always_ff @(posedge input_clk) begin
-
-end
-
-
-// This block controls streaming data from the fifo into the read
+// This block controls streaming data from the fifo into the bram
 assign fifo_overflow = fifo_full;
 assign fifo_prog_full = fifo_prog_full
 
@@ -73,32 +68,20 @@ always_ff @(posedge bram_clk) begin
             dina <= fifo_dout;
         end
     end
-end  
+end        
         
-        
-      /*
 
-        
-        dready[READ_LATENCY-1:0] <= {dready[READ_LATENCY-2:0], 
-        case (current_state)
-            idle: begin
-                dready <= 'b0;
-                read_error <= 'b0;
-            end
-            read: begin
-                if (dready) begin
+// This block controls the valid signal from the bram, pipelined to match the latency
+assign read_error = sbiterrb | dbiterrb;
+assign dout = doutb;
 
-                end
-            end
-            write: begin
-
-            end
-        endcase
+always_ff @(posedge bram_clk) begin
+    if (reset) begin
+        bram_valid <= '{default: '0};
+    end else if (enb == 1'b1) begin
+        bram_valid[BRAM_READ_LATENCY-1:0] <= {bram_valid[BRAM_READ_LATENCY-2:0], 1'b1}
     end
-
-
-
-end*/
+end
 
 xpm_memory_sdpram #(
     .ADDR_WIDTH_A(6),             
