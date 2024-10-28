@@ -9,9 +9,10 @@ module ram_interface # (
     parameter TOTAL_SIZE = 64*128,
     parameter FIFO_DEPTH = 1024
 )(
-    input logic input_clk,  // This clock is used as the input to the fifo, allowing a CDC
-    input logic bram_clk,   // This clock is used for the bram
-    input logic reset,  // Assumed to be synchronized to clk's domain before passing in
+    input logic input_clk,      // This clock is used as the input to the fifo, allowing a CDC
+    input logic bram_clk,       // This clock is used for the bram
+    input logic fifo_reset,     // Assumed to be synchronized to input_clk's domain before passing in
+    input logic bram_reset,     // Assumed to be synchronized to bram_clk's domain before passing in
     input logic din,            // This is connected directly to the fifo input
     input logic din_valid,      // This is connected directly to the fifo input
     input logic enb,
@@ -24,62 +25,46 @@ module ram_interface # (
     output logic read_error
 );
 
-typedef enum {
-    idle,
-    read,
-    write
-} bram_state;
-
-bram_state current_state;
-
-logic [FIFO_READ_LATENCY-1:0] fifo_valid;
-
 localparam int MAX_ADDRESS_INDEX $clog2(TOTAL_SIZE/WRITE_WIDTH);    // Index sized based on params
-logic [MAX_ADDRESS_INDEX-1:0] addra [FIFO_READ_LATENCY-1:0];
-
+logic [MAX_ADDRESS_INDEX-1:0] addra;
 logic [BRAM_READ_LATENCY-1:0] bram_valid; 
+logic [FIFO_READ_LATENCY-1:0] fifo_valid;
 logic sbiterrb, dbiterrb;
 
-// This block controls streaming data from the fifo into the bram
 assign fifo_overflow = fifo_full;
-assign fifo_prog_full = fifo_prog_full
-
-always_ff @(posedge bram_clk) begin
-    if (reset) begin
-        addra <= '{default: '0};
-        fifo_valid <= 'b0;
-    end else begin
-        // If the fifo isnt empty, load data into the BRAM
-        // These control signals are pipelined for the FIFO latency
-        if (!empty) begin
-            // Wrap around the address value, incrementing each time a value is written into the pipeline
-            if (addra == (TOTAL_SIZE/WRITE_WIDTH)-1) begin
-                addra[BRAM_READ_LATENCY-1:0] <= {addra[BRAM_READ_LATENCY-2:0], 'b0};
-            end else begin
-                addra[BRAM_READ_LATENCY-1:0] <= {addra[BRAM_READ_LATENCY-2:0], (addra[0]+1)};
-            end
-            fifo_valid[FIFO_READ_LATENCY-1:0] <= {fifo_valid[FIFO_READ_LATENCY-2:0], 1'b1}; // Pipeline a dvalid signal
-        end else begin
-            fifo_valid[FIFO_READ_LATENCY-1:0] <= {fifo_valid[FIFO_READ_LATENCY-2:0], 1'b0}; // Pipeline that data is not ready
-        end
-
-        // If the data is ready to pass from the FIFO to the BRAM, this value will be a 1
-        if (fifo_valid[FIFO_READ_LATENCY-1] == 1'b1) begin
-            dina <= fifo_dout;
-        end
-    end
-end        
-        
-
-// This block controls the valid signal from the bram, pipelined to match the latency
+assign fifo_prog_full = fifo_prog_full;
 assign read_error = sbiterrb | dbiterrb;
 assign dout = doutb;
 
+// When the data is valid, we increment the address
+always_ff @(posedge bram_clk) begin
+    if (bram_reset) begin
+        addra <= 'b0;
+    end else if (fifo_vaid[FIFO_READ_LATENCY-1] == 1) begin
+        // Wrap around the address value, incrementing each time a value is written into the pipeline
+        if (addra == (TOTAL_SIZE/WRITE_WIDTH)-1) begin
+            addra <= 'b0;
+        end else begin
+            addra <= addra + 1;
+        end
+    end
+end    
+
+// This is a clean way to pipeline the fifo valid signal based on !empty to arrive with a given latency
+always_ff @(posedge bram_clk) begin
+    if (bram_reset) begin
+        fifo_valid <= 'b0;
+    end else begin
+        fifo_valid <= fifo_valid << 1 | !empty; // Pipeline a fifo_valid signal
+    end
+end    
+
+// This block controls the valid signal from the bram, pipelined to match the latency
 always_ff @(posedge bram_clk) begin
     if (reset) begin
-        bram_valid <= '{default: '0};
-    end else if (enb == 1'b1) begin
-        bram_valid[BRAM_READ_LATENCY-1:0] <= {bram_valid[BRAM_READ_LATENCY-2:0], 1'b1}
+        bram_valid <= 'b0;
+    end else begin
+        bram_valid <= bram_valid << 1 | enb;
     end
 end
 
